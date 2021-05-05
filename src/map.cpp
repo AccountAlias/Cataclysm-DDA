@@ -159,6 +159,7 @@ map::map( int mapsize, bool zlev )
 }
 
 map::~map() = default;
+map &map::operator=( map && ) = default;
 
 static submap null_submap;
 
