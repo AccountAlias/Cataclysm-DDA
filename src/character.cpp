@@ -11777,7 +11777,7 @@ int Character::run_cost( int base_cost, bool diag ) const
     if( !is_mounted() ) {
         if( movecost > 100 ) {
             movecost *= mutation_value( "movecost_obstacle_modifier" );
-            if( movecost < 100 ) {
+            if( movecost < 105 ) {
                 movecost = 100;
             }
         }
