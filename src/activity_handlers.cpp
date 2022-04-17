@@ -109,7 +109,6 @@ static const activity_id ACT_BLEED( "ACT_BLEED" );
 static const activity_id ACT_BUILD( "ACT_BUILD" );
 static const activity_id ACT_BUTCHER( "ACT_BUTCHER" );
 static const activity_id ACT_BUTCHER_FULL( "ACT_BUTCHER_FULL" );
-static const activity_id ACT_CLEAR_RUBBLE( "ACT_CLEAR_RUBBLE" );
 static const activity_id ACT_CONSUME_DRINK_MENU( "ACT_CONSUME_DRINK_MENU" );
 static const activity_id ACT_CONSUME_FOOD_MENU( "ACT_CONSUME_FOOD_MENU" );
 static const activity_id ACT_CONSUME_FUEL_MENU( "ACT_CONSUME_FUEL_MENU" );
@@ -126,7 +125,6 @@ static const activity_id ACT_FIND_MOUNT( "ACT_FIND_MOUNT" );
 static const activity_id ACT_FISH( "ACT_FISH" );
 static const activity_id ACT_GAME( "ACT_GAME" );
 static const activity_id ACT_GENERIC_GAME( "ACT_GENERIC_GAME" );
-static const activity_id ACT_GUNMOD_ADD( "ACT_GUNMOD_ADD" );
 static const activity_id ACT_HAND_CRANK( "ACT_HAND_CRANK" );
 static const activity_id ACT_HEATING( "ACT_HEATING" );
 static const activity_id ACT_JACKHAMMER( "ACT_JACKHAMMER" );
@@ -273,9 +271,9 @@ activity_handlers::do_turn_functions = {
     { ACT_OPERATION, operation_do_turn },
     { ACT_ROBOT_CONTROL, robot_control_do_turn },
     { ACT_TREE_COMMUNION, tree_communion_do_turn },
-    { ACT_STUDY_SPELL, study_spell_do_turn},
+    { ACT_STUDY_SPELL, study_spell_do_turn },
     { ACT_WAIT_STAMINA, wait_stamina_do_turn },
-    { ACT_MULTIPLE_DIS, multiple_dis_do_turn }
+    { ACT_MULTIPLE_DIS, multiple_dis_do_turn },
 };
 
 const std::map< activity_id, std::function<void( player_activity *, Character * )> >
@@ -301,9 +299,7 @@ activity_handlers::finish_functions = {
     { ACT_REPAIR_ITEM, repair_item_finish },
     { ACT_HEATING, heat_item_finish },
     { ACT_MEND_ITEM, mend_item_finish },
-    { ACT_GUNMOD_ADD, gunmod_add_finish },
     { ACT_TOOLMOD_ADD, toolmod_add_finish },
-    { ACT_CLEAR_RUBBLE, clear_rubble_finish },
     { ACT_WAIT, wait_finish },
     { ACT_WAIT_WEATHER, wait_weather_finish },
     { ACT_WAIT_NPC, wait_npc_finish },
@@ -325,7 +321,7 @@ activity_handlers::finish_functions = {
     { ACT_PULL_CREATURE, pull_creature_finish },
     { ACT_MIND_SPLICER, mind_splicer_finish },
     { ACT_SPELLCASTING, spellcasting_finish },
-    { ACT_STUDY_SPELL, study_spell_finish }
+    { ACT_STUDY_SPELL, study_spell_finish },
 };
 
 namespace io
@@ -1825,18 +1821,29 @@ static bool magic_train( player_activity *act, Character *you )
 void activity_handlers::teach_finish( player_activity *act, Character *you )
 {
     const skill_id sk( act->name );
+    const proficiency_id pr( act->name );
+    const matype_id ma( act->name );
+    const spell_id sp( act->name );
+
+    std::string subject;
     if( sk.is_valid() ) {
-        const std::string sk_name = sk.obj().name();
-        if( you->is_avatar() ) {
-            add_msg( m_good, _( "You finish teaching %s." ), sk_name );
-        } else {
-            add_msg( m_good, _( "%s finishes teaching %s." ), you->name, sk_name );
-        }
-        act->set_to_null();
-        return;
+        subject = sk->name();
+    } else if( pr.is_valid() ) {
+        subject = pr->name();
+    } else if( ma.is_valid() ) {
+        subject = ma->name.translated();
+    } else if( sp.is_valid() ) {
+        subject = sp->name.translated();
+    } else {
+        debugmsg( "teach_finish without a valid skill or style or spell name" );
     }
 
-    debugmsg( "teach_finish without a valid skill or style or spell name" );
+    if( you->is_avatar() ) {
+        add_msg( m_good, _( "You finish teaching %s." ), subject );
+    } else {
+        add_msg( m_good, _( "%s finishes teaching %s." ), you->name, subject );
+    }
+
     act->set_to_null();
 }
 
@@ -2504,62 +2511,6 @@ void activity_handlers::mend_item_finish( player_activity *act, Character *you )
     add_msg( m_good, method->success_msg.translated(), target->tname() );
 }
 
-void activity_handlers::gunmod_add_finish( player_activity *act, Character *you )
-{
-    act->set_to_null();
-    // first unpack all of our arguments
-    if( act->values.size() != 4 ) {
-        debugmsg( "Insufficient arguments to ACT_GUNMOD_ADD" );
-        return;
-    }
-
-    item &gun = *act->targets.at( 0 );
-    item &mod = *act->targets.at( 1 );
-
-    // chance of success (%)
-    const int roll = act->values[1];
-    // chance of damage (%)
-    const int risk = act->values[2];
-
-    // any tool charges used during installation
-    const itype_id tool( act->name );
-    const int qty = act->values[3];
-
-    if( !gun.is_gunmod_compatible( mod ).success() ) {
-        debugmsg( "Invalid arguments in ACT_GUNMOD_ADD" );
-        return;
-    }
-
-    if( !tool.is_empty() && qty > 0 ) {
-        you->use_charges( tool, qty );
-    }
-
-    if( rng( 0, 100 ) <= roll ) {
-        add_msg( m_good, _( "You successfully attached the %1$s to your %2$s." ), mod.tname(),
-                 gun.tname() );
-        gun.put_in( you->i_rem( &mod ), item_pocket::pocket_type::MOD );
-
-    } else if( rng( 0, 100 ) <= risk ) {
-        if( gun.inc_damage() ) {
-            // Remove irremovable mods prior to destroying the gun
-            for( item *mod : gun.gunmods() ) {
-                if( mod->is_irremovable() ) {
-                    you->remove_item( *mod );
-                }
-            }
-            add_msg( m_bad, _( "You failed at installing the %s and destroyed your %s!" ), mod.tname(),
-                     gun.tname() );
-            you->i_rem( &gun );
-        } else {
-            add_msg( m_bad, _( "You failed at installing the %s and damaged your %s!" ), mod.tname(),
-                     gun.tname() );
-        }
-
-    } else {
-        add_msg( m_info, _( "You failed at installing the %s." ), mod.tname() );
-    }
-}
-
 void activity_handlers::toolmod_add_finish( player_activity *act, Character *you )
 {
     act->set_to_null();
@@ -2574,19 +2525,6 @@ void activity_handlers::toolmod_add_finish( player_activity *act, Character *you
     mod.set_flag( flag_IRREMOVABLE );
     tool.put_in( mod, item_pocket::pocket_type::MOD );
     act->targets[1].remove_item();
-}
-
-void activity_handlers::clear_rubble_finish( player_activity *act, Character *you )
-{
-    const tripoint &pos = act->placement;
-    map &here = get_map();
-    you->add_msg_if_player( m_info, _( "You clear up the %s." ),
-                            here.furnname( pos ) );
-    here.furn_set( pos, f_null );
-
-    act->set_to_null();
-
-    here.maybe_trigger_trap( pos, *you, true );
 }
 
 // This activity opens the menu (it's not meant to queue consumption of items)
@@ -2711,7 +2649,7 @@ void activity_handlers::travel_do_turn( player_activity *act, Character *you )
 void activity_handlers::armor_layers_do_turn( player_activity *, Character *you )
 {
     you->cancel_activity();
-    you->sort_armor();
+    you->worn.sort_armor( *you );
 }
 
 void activity_handlers::atm_do_turn( player_activity *, Character *you )
@@ -2957,7 +2895,7 @@ void activity_handlers::operation_do_turn( player_activity *act, Character *you 
             act->set_to_null();
 
             if( u_see ) {
-                add_msg( m_bad, _( "The autodoc suffers a catastrophic failure." ) );
+                add_msg( m_bad, _( "The Autodoc suffers a catastrophic failure." ) );
 
                 you->add_msg_player_or_npc( m_bad,
                                             _( "The Autodoc's failure damages you greatly." ),
